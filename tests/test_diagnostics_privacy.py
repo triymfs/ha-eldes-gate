@@ -67,6 +67,8 @@ FORBIDDEN = (
     "Bearer super-token",
     "drop table",
     "1.5",
+    "+15555550199",
+    "15555550199",
 )
 
 
@@ -173,6 +175,7 @@ def assert_redacted(payload) -> None:
         "status",
         "update_interval",
         "open_timeout",
+        "controller_sim_override_count",
         *DATA.PHONE_CANDIDATE_KEYS,
         *DATA.DEVICE_FIELD_KEYS,
         *DATA.OUTPUT_FIELD_KEYS,
@@ -256,6 +259,10 @@ def test_sensitive_fixture_is_not_emitted():
             "phone": PHONE,
             "uuid": UUID,
             "update_interval_bad": "300; drop table",
+            "controller_sim_overrides": {
+                "ctrl-secret": "+15555550199",
+                "ctrl-bad": "1;+15555550199",
+            },
         },
     )
     assert original == snapshot
@@ -280,6 +287,7 @@ def test_sensitive_fixture_is_not_emitted():
     assert device["unlisted_phone_shaped_value_count"] >= 1
     assert "contractor_phone" not in json.dumps(report)
     assert report["options"] == {"update_interval": 300, "open_timeout": 30}
+    assert report["controller_sim_override_count"] == 1
     output = device["outputs"]["items"][0]
     assert output["number"] == 1
     assert output["field_shapes"]["control_name"]["class"] == "non_empty"

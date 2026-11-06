@@ -41,6 +41,8 @@ CONF_PASSWORD = "password"
 CONF_UUID = "uuid"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_OPEN_TIMEOUT = "open_timeout"
+# Per-controller SIM used in OPN. Not the account username (CONF_PHONE).
+CONF_CONTROLLER_SIM_OVERRIDES = "controller_sim_overrides"
 
 DEFAULT_UPDATE_INTERVAL = 300  # 5 minutes
 MIN_UPDATE_INTERVAL = 60

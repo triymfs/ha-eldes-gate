@@ -11,10 +11,16 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .api import EldesAPI, EldesAPIError, EldesAuthError
 from .const import (
     ATTR_EMAIL,
+    CONF_CONTROLLER_SIM_OVERRIDES,
     CONF_OPEN_TIMEOUT,
     CONF_PASSWORD,
     CONF_PHONE,
@@ -27,6 +33,14 @@ from .const import (
     MAX_UPDATE_INTERVAL,
     MIN_OPEN_TIMEOUT,
     MIN_UPDATE_INTERVAL,
+)
+from .sim_override import (
+    SimOverrideError,
+    apply_controller_sim_change,
+    copy_options,
+    lookup_controller_sim,
+    merge_polling_options,
+    phone_attribute_summary,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -246,8 +260,39 @@ class EldesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return EldesOptionsFlow()
 
 
+def _loaded_controllers(hass: HomeAssistant, entry: config_entries.ConfigEntry) -> list[dict[str, Any]]:
+    """Controllers from the last in-memory device list. No API call."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    data = getattr(coordinator, "data", None)
+    devices = getattr(data, "devices", None)
+    if not isinstance(devices, list):
+        return []
+    return [
+        device
+        for device in devices
+        if isinstance(device, dict) and device.get("id") is not None
+    ]
+
+
+def _controller_choices(devices: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Dropdown labels. The SIM number is never included."""
+    choices: list[dict[str, str]] = []
+    used: set[str] = set()
+    for index, device in enumerate(devices):
+        name = device.get("name")
+        if isinstance(name, str) and name.strip():
+            label = name.strip()
+        else:
+            label = f"Controller {index + 1}"
+        if label in used:
+            label = f"{label} ({index + 1})"
+        used.add(label)
+        choices.append({"value": str(device["id"]), "label": label})
+    return choices
+
+
 class EldesOptionsFlow(config_entries.OptionsFlow):
-    """Edit update interval and open-command timeout.
+    """Polling settings and an optional per-controller SIM override.
 
     Note: do NOT define __init__ here. Recent HA versions (2024.12+)
     expose `config_entry` as a read-only property on OptionsFlow that
@@ -259,8 +304,21 @@ class EldesOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["polling", "controller_sim"],
+        )
+
+    async def async_step_polling(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Only interval keys are taken from the form. Saved SIM
+            # overrides stay on the entry and are not logged.
+            return self.async_create_entry(
+                title="",
+                data=merge_polling_options(self.config_entry.options, user_input),
+            )
 
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
@@ -268,7 +326,6 @@ class EldesOptionsFlow(config_entries.OptionsFlow):
         current_timeout = self.config_entry.options.get(
             CONF_OPEN_TIMEOUT, DEFAULT_OPEN_TIMEOUT
         )
-
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -285,4 +342,94 @@ class EldesOptionsFlow(config_entries.OptionsFlow):
                 ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="polling", data_schema=schema)
+
+    async def async_step_controller_sim(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        devices = _loaded_controllers(self.hass, self.config_entry)
+        if not devices:
+            return self.async_abort(reason="no_controllers_loaded")
+        if user_input is not None:
+            self._controller_sim_device_id = str(user_input["controller"])
+            return await self.async_step_controller_sim_edit()
+
+        schema = vol.Schema(
+            {
+                vol.Required("controller"): SelectSelector(
+                    SelectSelectorConfig(
+                        options=_controller_choices(devices),
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="controller_sim",
+            data_schema=schema,
+        )
+
+    async def async_step_controller_sim_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        device_id = getattr(self, "_controller_sim_device_id", None)
+        devices = _loaded_controllers(self.hass, self.config_entry)
+        device = next(
+            (
+                item
+                for item in devices
+                if device_id is not None and str(item.get("id")) == device_id
+            ),
+            None,
+        )
+        if device is None:
+            return self.async_abort(reason="controller_not_in_list")
+
+        summary = phone_attribute_summary(device, self.config_entry.options)
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            # A missing text field must not wipe a saved number. An explicit
+            # empty field or the removal checkbox removes only this controller.
+            clear = bool(user_input.get("clear_controller_sim"))
+            field_present = "controller_sim_phone" in user_input
+            raw_phone = user_input.get("controller_sim_phone")
+            blank = isinstance(raw_phone, str) and raw_phone.strip() == ""
+            if not clear and not field_present:
+                return self.async_create_entry(
+                    title="",
+                    data=copy_options(self.config_entry.options),
+                )
+            try:
+                updated = apply_controller_sim_change(
+                    self.config_entry.options,
+                    device_id,
+                    raw_phone,
+                    clear=clear or blank,
+                )
+            except SimOverrideError:
+                errors["base"] = "invalid_controller_sim"
+            else:
+                return self.async_create_entry(title="", data=updated)
+
+        overrides = self.config_entry.options.get(CONF_CONTROLLER_SIM_OVERRIDES)
+        saved = lookup_controller_sim(overrides, device_id)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    "controller_sim_phone",
+                    description={"suggested_value": saved or ""},
+                ): str,
+                vol.Optional("clear_controller_sim", default=False): bool,
+            }
+        )
+        return self.async_show_form(
+            step_id="controller_sim_edit",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "api_phone_state": summary["api_phone_class"],
+                "override_active": (
+                    "yes" if summary["controller_sim_override_active"] else "no"
+                ),
+            },
+        )

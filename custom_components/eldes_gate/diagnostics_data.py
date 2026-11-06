@@ -89,6 +89,9 @@ _UUID_NAME_RE = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 _PHONE_VALUE_RE = re.compile(r"\+?\d{8,15}")
+# Same rule as sim_override.validate_controller_sim. Count only; never copy.
+_CONTROLLER_SIM_OVERRIDES_KEY = "controller_sim_overrides"
+_STORED_SIM_RE = re.compile(r"^\+?[0-9]{8,15}\Z")
 _PHONE_SEPARATOR_RE = re.compile(r"[\s().\-]")
 
 _MAX_CHILD_SCAN = 50
@@ -113,9 +116,11 @@ HOW_TO_READ = (
     "phone-like name, a digit-like name, or a phone-shaped value; that name "
     "and value are not included. char_length and digit_count describe a "
     "value without reproducing it. safe_fields copies only a bool is_alive "
-    "and small integers (model id, status, output number). This report uses "
-    "the device list already stored by the integration. It does not contact "
-    "Eldes and does not send a gate command."
+    "and small integers (model id, status, output number). "
+    "controller_sim_override_count is how many controllers have a saved SIM "
+    "override in the accepted digit format. Those numbers are not included. "
+    "This report uses the device list already stored by the integration. "
+    "It does not contact Eldes and does not send a gate command."
 )
 
 NOTES: tuple[str, ...] = (
@@ -123,7 +128,7 @@ NOTES: tuple[str, ...] = (
     "unknown JSON keys are omitted.",
     "A candidate listed as missing was checked and was not present under "
     "that exact name.",
-    "Open-command behavior is unchanged.",
+    "This download does not send a command or edit options.",
 )
 
 
@@ -172,6 +177,7 @@ def _build(
         "skipped_non_object": skipped,
         "device_count": len(summarized),
         "options": _safe_options(options),
+        "controller_sim_override_count": _valid_sim_override_count(options),
         "devices": summarized,
     }
     if device_matched is not None:
@@ -207,6 +213,24 @@ def _coerce_devices(devices: Any) -> tuple[list[dict[str, Any]], int, bool]:
         else:
             skipped += 1
     return items, skipped, True
+
+
+def _valid_sim_override_count(options: Mapping[str, Any] | None) -> int:
+    """Count accepted overrides. Values are not copied into the report."""
+    if not isinstance(options, Mapping):
+        return 0
+    raw = options.get(_CONTROLLER_SIM_OVERRIDES_KEY)
+    if not isinstance(raw, Mapping):
+        return 0
+    count = 0
+    for value in raw.values():
+        if (
+            isinstance(value, str)
+            and len(value) <= 64
+            and _STORED_SIM_RE.fullmatch(value.strip()) is not None
+        ):
+            count += 1
+    return count
 
 
 def _safe_options(options: Mapping[str, Any] | None) -> dict[str, int]:

@@ -55,12 +55,45 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_controller_sim": "Enter 8 to 15 digits with an optional leading +. Do not use spaces, dashes, letters, or other separators."
+    },
+    "abort": {
+      "no_controllers_loaded": "The device list is not loaded yet. Wait until the integration is connected, then open options again. This does not send a gate command.",
+      "controller_not_in_list": "That controller is no longer in the latest device list. Open options again."
+    },
     "step": {
       "init": {
         "title": "Eldes Gate options",
+        "description": "The phone on the sign-in screen is only the account username. It is not sent in the open command.",
+        "menu_options": {
+          "polling": "Polling and confirmation timeout",
+          "controller_sim": "Controller SIM number (experimental)"
+        }
+      },
+      "polling": {
+        "title": "Polling and confirmation timeout",
         "data": {
           "update_interval": "Polling interval (seconds)",
           "open_timeout": "Open command confirmation timeout (seconds)"
+        }
+      },
+      "controller_sim": {
+        "title": "Choose a controller",
+        "description": "Each controller has its own SIM number. This is not the account username.",
+        "data": {
+          "controller": "Controller"
+        }
+      },
+      "controller_sim_edit": {
+        "title": "Controller SIM number (experimental)",
+        "description": "This value is the controller SIM placed after the semicolon in the existing open command. It is not the account username.\n\nDevice-list phone field: {api_phone_state}. Saved override active: {override_active}.\n\nSubmit an empty field, or enable removal, to delete the saved number and use the device-list phone again. If that list field is missing or empty, the command keeps a blank phone, which is the current behavior. Saving a number is experimental and does not guarantee the gate will move. Removal wins if both the checkbox and a new number are set.",
+        "data": {
+          "controller_sim_phone": "Controller SIM number",
+          "clear_controller_sim": "Remove saved SIM number"
+        },
+        "error": {
+          "invalid_controller_sim": "Enter 8 to 15 digits with an optional leading +. Do not use spaces, dashes, letters, or other separators."
         }
       }
     }

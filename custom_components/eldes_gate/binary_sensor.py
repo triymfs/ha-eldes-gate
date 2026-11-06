@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION, DOMAIN, MANUFACTURER
 from .coordinator import EldesCoordinator
+from .sim_override import phone_attribute_summary
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,8 +93,8 @@ class EldesAliveBinarySensor(
         return {
             "device_id": d.get("id"),
             "imei": d.get("imei"),
-            "phone": d.get("phone"),
             "model_id": d.get("model_id"),
             "status": d.get("status"),
             "updated_at": d.get("updated_at"),
+            **phone_attribute_summary(d, self._entry.options),
         }

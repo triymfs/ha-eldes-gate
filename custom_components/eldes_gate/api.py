@@ -39,6 +39,7 @@ from .const import (
     HTTP_TIMEOUT,
     HTTP_USER_AGENT,
 )
+from .sim_override import build_open_command_body
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class EldesAPI:
             "uuid": self._uuid,
         }
         url = API_BASE_URL + ENDPOINT_LOGIN
-        _LOGGER.debug("Eldes login phone=%s", self._phone)
+        _LOGGER.debug("Eldes login")
         try:
             with self._lock:
                 resp = self._session.post(url, json=body, timeout=HTTP_TIMEOUT)
@@ -193,10 +194,10 @@ class EldesAPI:
             device_id: numeric device id from /devices
             output_number: 1..N output index ("controllerNr" in the app)
             device_phone: SIM phone number of the controller
-                (DeviceDetail.phone), NOT the user's phone
+                (DeviceDetail.phone or a per-controller override),
+                NOT the account username
         """
-        opn = f"{int(output_number)};{device_phone or ''}"
-        body = {"variables": {"OPN": opn}}
+        body = build_open_command_body(output_number, device_phone)
         path = ENDPOINT_DEVICE_COMMAND.format(device_id=device_id)
         return self._authed_json("POST", path, json=body)
 
