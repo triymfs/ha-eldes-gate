@@ -40,6 +40,11 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinator import EldesCoordinator
+from .sim_override import (
+    phone_attribute_summary,
+    phone_for_command,
+    redact_controller_sim,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -162,10 +167,10 @@ class EldesOpenButton(CoordinatorEntity[EldesCoordinator], ButtonEntity):
         return {
             "device_id": dev.get("id"),
             "device_name": dev.get("name"),
-            "device_phone": dev.get("phone"),
             "output_number": out.get("number"),
             "control_name": out.get("control_name"),
             "zone_name": out.get("zone_name"),
+            **phone_attribute_summary(dev, self._entry.options),
         }
 
     async def async_press(self) -> None:
@@ -182,18 +187,21 @@ class EldesOpenButton(CoordinatorEntity[EldesCoordinator], ButtonEntity):
         timeout = float(
             self._entry.options.get(CONF_OPEN_TIMEOUT, DEFAULT_OPEN_TIMEOUT)
         )
+        resolved_sim = phone_for_command(device, self._entry.options)
         try:
             resp = await self.hass.async_add_executor_job(
                 api.send_open,
                 device["id"],
                 self._output_number,
-                device.get("phone") or "",
+                resolved_sim,
             )
         except EldesAuthError as err:
             self._entry.async_start_reauth(self.hass)
-            raise HomeAssistantError(f"Auth error: {err}") from err
+            safe = redact_controller_sim(str(err), resolved_sim)
+            raise HomeAssistantError(f"Auth error: {safe}") from None
         except EldesAPIError as err:
-            raise HomeAssistantError(f"Open command failed: {err}") from err
+            safe = redact_controller_sim(str(err), resolved_sim)
+            raise HomeAssistantError(f"Open command failed: {safe}") from None
 
         seq = resp.get("SEQ") or resp.get("seq")
         _LOGGER.info(

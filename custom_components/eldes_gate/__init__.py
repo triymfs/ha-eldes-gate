@@ -38,6 +38,7 @@ from .const import (
     SERVICE_REFRESH,
 )
 from .coordinator import EldesCoordinator
+from .sim_override import phone_for_command, redact_controller_sim
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,19 +198,26 @@ def _register_services(hass: HomeAssistant) -> None:
             target_coord.entry.options.get(CONF_OPEN_TIMEOUT, DEFAULT_OPEN_TIMEOUT),
         )
 
+        resolved_sim = phone_for_command(device, target_coord.entry.options)
         try:
             resp = await hass.async_add_executor_job(
                 target_coord.api.send_open,
                 device["id"],
                 int(output["number"]),
-                device.get("phone") or "",
+                resolved_sim,
             )
         except EldesAuthError as err:
-            _LOGGER.error("Auth error sending open: %s", err)
+            _LOGGER.error(
+                "Auth error sending open: %s",
+                redact_controller_sim(str(err), resolved_sim),
+            )
             target_coord.entry.async_start_reauth(hass)
             return
         except EldesAPIError as err:
-            _LOGGER.error("API error sending open: %s", err)
+            _LOGGER.error(
+                "API error sending open: %s",
+                redact_controller_sim(str(err), resolved_sim),
+            )
             return
 
         seq = resp.get("SEQ") or resp.get("seq")

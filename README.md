@@ -16,6 +16,20 @@ GSM gate / garage-door controllers, talking to the same cloud backend
   the controller's `is_alive` flag (cloud-side liveness, not gate
   position — see notes).
 - **Diagnostic sensors** – status code, last-updated timestamp, model id.
+- **Redacted diagnostics download** – Home Assistant's standard
+  **Download diagnostics** action summarizes the device list already in
+  memory. It reports whether `phone` is missing, null, empty, blank, or
+  non-empty, and whether another allowlisted field exists. Values,
+  names, identifiers, and unknown JSON keys are left out. It does not
+  call Eldes and does not send a gate command. See
+  [Privacy-preserving diagnostics](#privacy-preserving-diagnostics).
+- **Experimental per-controller SIM override** – optional number stored
+  in the integration options and used as the controller SIM in the
+  existing `output;SIM` open command. It is not the account username.
+  If it is unset, the device-list `phone` field is used as before,
+  including when that field is blank. This does not guarantee the gate
+  will move. See
+  [Controller SIM override](#controller-sim-override-experimental).
 - **Account-level buttons** – per config entry, on a synthetic "Eldes
   Account" device:
   - `button.eldes_account_<phone>_send_password_reset_email` – fires
@@ -288,6 +302,147 @@ non-root way to extract it and you're stuck with option 1.
   and a 2xx for known ones. Surfaced as `EldesAPIError` upstream.
 - **Cloud-only**. There's no local LAN protocol exposed; every entity
   state depends on cloud polling.
+
+## Privacy-preserving diagnostics
+
+Version 0.3.0 includes Home Assistant's standard diagnostics download. Use it
+to see the shape of the device list the integration already stored
+(including whether `phone` is absent or another known field is present)
+without printing phone numbers, names, identifiers, credentials, or tokens.
+`controller_sim_override_count` is only a count of saved SIM overrides;
+the digits are not in the file.
+
+The download does not refresh, does not call the Eldes API, and does not
+send an open command. Gate behaviour is unchanged. A missing candidate
+means that exact key was not in the stored list; it does not describe the
+controller's own output settings.
+
+### Install this version
+
+Install the **whole** `custom_components/eldes_gate/` directory from this
+revision. Copying only `diagnostics.py` and `diagnostics_data.py` leaves
+`manifest.json` at 0.2.0 and omits the options code, so the installation
+does not match the version you are running.
+
+1. Replace `config/custom_components/eldes_gate/` with the full directory
+   from this revision.
+2. Confirm `manifest.json` contains `"version": "0.3.0"` before you restart.
+3. Restart Home Assistant.
+4. Confirm the existing Eldes Gate entry is still there. Do not press
+   **Open** and do not run `eldes_gate.open` merely to test the install.
+
+No Eldes account, UUID, or gate setting is changed by installing or by
+downloading the report. Saving a controller SIM override (below) only
+writes an integration option; it does not send a command.
+
+### Download the report
+
+Integration page (every controller, preferred when a file might be shared):
+
+1. **Settings → Devices & services**.
+2. Open **Eldes Gate**.
+3. Open the three-dot menu and choose **Download diagnostics**.
+
+One gate, from that gate's device page (not the synthetic Eldes Account
+device):
+
+1. **Settings → Devices & services**.
+2. Open **Eldes Gate**, then open the gate device.
+3. Open the three-dot menu and choose **Download diagnostics**.
+
+Home Assistant names a device download using the device's display name.
+The Eldes Account device name contains the login phone, so do not download
+diagnostics from that device if the file will leave the machine. The JSON
+body this integration adds still omits that phone. The account-device
+download also contains no controller summary; use the integration menu or
+the gate device instead.
+
+### How to read `data` in the JSON file
+
+In `data.devices[]`:
+
+| Field | Meaning |
+|---|---|
+| `phone.class` | The key the open command reads. `missing` (no key), `null`, `empty` (`""`), `blank` (whitespace only), or `non_empty`. |
+| `phone.type` / `char_length` / `digit_count` | Type and sizes only. The characters are not included. |
+| `alternate_allowlisted_phone_field_present` | Some other name from the fixed candidate list (`device_phone`, `msisdn`, `sim`, …) is present on the device, on an output, or one level inside a candidate value. |
+| `possible_unlisted_phone_field` | Some key outside that list has a phone-like name, a digit-like name, or a phone-shaped value. The name and the value are omitted. |
+| `safe_fields` | Only `is_alive` when it is a bool, and `model_id` / `status` when they are small integers. |
+| `outputs.items[].number` | Output number when it is a small integer. Labels such as `control_name` are lengths only. |
+
+`data.options` includes only the polling interval and the confirmation
+timeout. The config-entry phone, password, and UUID are not read.
+
+Home Assistant wraps this payload with its own `home_assistant`,
+`custom_components`, and `integration_manifest` sections. Review the whole
+file before sharing it. Those sections are outside this redaction.
+
+### Roll back
+
+1. Restore the previous full `config/custom_components/eldes_gate/`
+   directory (a 0.2.0 tree has no `diagnostics.py` and no SIM option).
+2. Restart Home Assistant.
+
+The **Download diagnostics** action for Eldes Gate disappears, and the
+options menu no longer offers a controller SIM. An override already saved
+in Home Assistant's config entry is ignored by the older code. To drop
+that stored value, remove it in the 0.3.0 options screen before rolling
+back. Nothing on the Eldes account or the gate was changed.
+
+## Controller SIM override (experimental)
+
+The open command is still `output_number;controller_sim`. Output numbers
+are not remapped. The phone on the Eldes sign-in form is the **account
+username** and is not used in that command.
+
+The device-list field `phone` is what the command uses when no override
+is saved. If that field is missing, null, or `""`, the command is sent
+with a blank phone (`1;` for output 1). That is the same behavior as
+before this option existed. A saved override replaces only that blank
+(or any other list value) for the controller you pick. It is an
+experiment. A non-blank value here does **not** mean the gate will move.
+
+The button and the `eldes_gate.open` service use the same resolution.
+Entity attributes show `api_phone_class` (`missing`, `null`, `empty`,
+`blank`, `non_empty`, or `unsupported`) and
+`controller_sim_override_active` (`true`/`false`). They do not show the
+digits. Diagnostics do not show them either. The integration does not
+write the number into its log lines or error text. Home Assistant does
+store the option in the config entry so the command can use it; do not
+paste a debug trace of the options form if that trace contains the field.
+
+Accepted form: 8 to 15 ASCII digits, with an optional leading `+`.
+The integration does not add a country prefix. Spaces, dashes,
+parentheses, letters, and `;` are rejected so the value cannot add
+another field to the command.
+
+### Set or remove it
+
+1. **Settings → Devices & services → Eldes Gate → Configure** (gear icon).
+2. Choose **Controller SIM number (experimental)**.
+3. Choose the controller by its name. The list does not include the SIM.
+4. Enter the controller SIM, or leave the field empty / enable
+   **Remove saved SIM number**, then submit.
+5. Do not press **Open** unless you intend to try the command.
+
+Polling interval and confirmation timeout are the other menu item.
+Changing them keeps any saved SIM overrides. Saving a SIM keeps the
+polling settings and any other controller's override.
+
+`api_phone_state` on that form is the device-list field, not the saved
+override. `empty` means the list value is `""`.
+
+### Offline test
+
+```sh
+python -m pytest tests
+```
+
+The tests load the pure modules without Home Assistant and without
+network. Diagnostics checks use synthetic secrets. SIM checks use
+obviously fake numbers and cover precedence, per-controller isolation,
+option preservation and removal, invalid input, privacy, and the
+open-command body.
 
 ## Development
 
